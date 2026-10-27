@@ -25,6 +25,10 @@ POSSIBLE_SERVICE_UUIDS = [
 TX_CHARACTERISTIC_UUID = "0000ae01-0000-1000-8000-00805f9b34fb"
 RX_CHARACTERISTIC_UUID = "0000ae02-0000-1000-8000-00805f9b34fb"
 
+# Some printers expose ff02/ff03 instead of ae01/ae02.
+FF_TX_CHARACTERISTIC_UUID = "0000ff02-0000-1000-8000-00805f9b34fb"
+FF_RX_CHARACTERISTIC_UUID = "0000ff03-0000-1000-8000-00805f9b34fb"
+
 PRINTER_READY_NOTIFICATION = b"\x51\x78\xae\x01\x01\x00\x00\x00\xff"
 
 SCAN_TIMEOUT_S = 10
@@ -78,6 +82,15 @@ async def get_device_address(device: Optional[str]):
     return await scan(device, timeout=SCAN_TIMEOUT_S)
 
 
+def get_characteristic_uuids(client):
+    services = client.services
+    if services.get_characteristic(FF_TX_CHARACTERISTIC_UUID) and services.get_characteristic(
+        FF_RX_CHARACTERISTIC_UUID
+    ):
+        return FF_TX_CHARACTERISTIC_UUID, FF_RX_CHARACTERISTIC_UUID
+    return TX_CHARACTERISTIC_UUID, RX_CHARACTERISTIC_UUID
+
+
 def notification_receiver_factory(event):
     def notification_receiver(sender, data):
         logger.debug(f"📡 Received notification: {data}")
@@ -113,13 +126,15 @@ async def run_ble(data, device: Optional[str]):
 
         receive_notification = notification_receiver_factory(event)
 
-        await client.start_notify(RX_CHARACTERISTIC_UUID, receive_notification)
+        tx_uuid, rx_uuid = get_characteristic_uuids(client)
+        logger.debug(f"📡 Using TX {tx_uuid}, RX {rx_uuid}")
+        await client.start_notify(rx_uuid, receive_notification)
 
         logger.info(
             f"⏳ Sending {len(data)} bytes of data in chunks of {chunk_size} bytes..."
         )
         for i, chunk in enumerate(chunkify(data, chunk_size)):
-            await client.write_gatt_char(TX_CHARACTERISTIC_UUID, chunk)
+            await client.write_gatt_char(tx_uuid, chunk)
             await asyncio.sleep(WAIT_AFTER_EACH_CHUNK_S)
 
         try:
